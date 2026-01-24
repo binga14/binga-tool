@@ -1,0 +1,15 @@
+<script>
+  window.BINGA = window.BINGA || {};
+  window.BINGA.productId = {% if product %}{{ product.id | json }}{% else %}null{% endif %};
+  console.log("[BINGA] embed loaded", window.BINGA);
+</script>
+
+{{ 'binga-buy-now.js' | asset_url | script_tag }}
+
+{% schema %}
+{
+  "name": "Binga Buy Now Popup",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
