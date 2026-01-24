@@ -1,10 +1,12 @@
 <script>
-  window.BINGA = window.BINGA || {};
-  window.BINGA.productId = {% if product %}{{ product.id | json }}{% else %}null{% endif %};
-  console.log("[BINGA] embed loaded", window.BINGA);
+  window.BINGA_BUY_NOW = window.BINGA_BUY_NOW || {};
+  window.BINGA_BUY_NOW.productId =
+    {% if product %}{{ product.id | json }}{% else %}null{% endif %};
+
+  console.log("[BINGA] embed loaded", window.BINGA_BUY_NOW);
 </script>
 
-{{ 'binga-buy-now.js' | asset_url | script_tag }}
+<script src="{{ 'binga-buy-now.js' | asset_url }}" defer></script>
 
 {% schema %}
 {
