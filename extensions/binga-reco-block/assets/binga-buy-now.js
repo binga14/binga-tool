@@ -20,6 +20,9 @@
         "button[href^='/checkout']",
     ].join(",");
 
+    const UPSALE_MARKER_KEY = "_binga_upsell";
+    const UPSALE_MARKER_VALUE = "1";
+
     async function getCart() {
         const res = await fetch("/cart.js", { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error("cart_fetch_failed");
@@ -27,19 +30,25 @@
     }
 
     async function addVariantToCart(variantId, quantity, properties) {
+        const body = { id: Number(variantId), quantity: Number(quantity || 1) };
+        if (properties && typeof properties === "object") body.properties = properties;
+
         const res = await fetch("/cart/add.js", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({
-                id: Number(variantId),
-                quantity: Number(quantity || 1),
-                ...(properties ? { properties } : {}),
-            }),
+            body: JSON.stringify(body),
         });
-        if (!res.ok) throw new Error("add_to_cart_failed");
+
+        if (!res.ok) {
+            let msg = "add_to_cart_failed";
+            try {
+                const j = await res.json();
+                msg = j?.description || j?.message || msg;
+            } catch { }
+            throw new Error(msg);
+        }
         return res.json();
     }
-
 
     async function changeLineQuantity(line, quantity) {
         const res = await fetch("/cart/change.js", {
@@ -73,24 +82,25 @@
         return { variantId, qty };
     }
 
-    function fmtMoney(n) {
-        const v = Number(n);
-        if (!Number.isFinite(v)) return "";
-        return `$${v.toFixed(2)}`;
-    }
-
-    function discountedPrice(n, percent = 10) {
-        const v = Number(n);
-        if (!Number.isFinite(v)) return null;
-        return v * (1 - percent / 100);
-    }
-
-
     function setCartCount(cart) {
         const el = document.querySelector("#binga-cart-count");
         if (!el) return;
         const count = Number(cart?.item_count ?? 0);
         el.textContent = String(count);
+    }
+
+    const money = (n) => {
+        const x = Number(n);
+        if (!Number.isFinite(x)) return "";
+        return `$${x.toFixed(2)}`;
+    };
+
+    function calcDiscount(priceStr, percent) {
+        const p = Number(priceStr);
+        const pct = Number(percent);
+        if (!Number.isFinite(p) || !Number.isFinite(pct)) return { original: "", discounted: "" };
+        const d = p * (1 - pct / 100);
+        return { original: money(p), discounted: money(d) };
     }
 
     function openModalSkeleton() {
@@ -144,11 +154,15 @@
         }
 
         .binga-product-price{
-          font-size:16px;
-          font-weight:600;
+          font-size:14px;
           color:#333;
           margin-bottom:10px;
+          line-height:1.3;
         }
+
+        .binga-product-price .orig{ text-decoration:line-through; opacity:.55; font-size:13px; }
+        .binga-product-price .disc{ font-size:16px; font-weight:700; }
+        .binga-product-price .pct{ opacity:.7; font-size:12px; margin-left:6px; }
 
         .binga-action{ margin-top:auto; width:100%; }
 
@@ -197,32 +211,38 @@
         return { close };
     }
 
-    function renderProducts(products, onAddOnly, onCheckoutNow) {
+    function renderProducts(products, discountPercent, onAddOnly, onCheckoutNow) {
         const container = document.querySelector("#binga-buy-now-modal");
         if (!container) return;
 
-        function renderAddButton(variantId) {
-            return `
-        <button class="binga-btn primary binga-add" data-variant-id="${variantId}">
-          Add to cart
-        </button>
-      `;
-        }
+        const renderAddButton = (variantId) => `
+      <button class="binga-btn primary binga-add" data-variant-id="${variantId}">
+        Add to cart
+      </button>
+    `;
 
-        function renderStepper(variantId, qty) {
-            return `
-        <div class="binga-stepper" data-variant-id="${variantId}">
-          <button class="binga-btn binga-minus" data-variant-id="${variantId}" aria-label="Decrease">−</button>
-          <div class="binga-qty" data-variant-id="${variantId}">${qty}</div>
-          <button class="binga-btn binga-plus" data-variant-id="${variantId}" aria-label="Increase">+</button>
-        </div>
-      `;
-        }
+        const renderStepper = (variantId, qty) => `
+      <div class="binga-stepper" data-variant-id="${variantId}">
+        <button class="binga-btn binga-minus" data-variant-id="${variantId}" aria-label="Decrease">−</button>
+        <div class="binga-qty" data-variant-id="${variantId}">${qty}</div>
+        <button class="binga-btn binga-plus" data-variant-id="${variantId}" aria-label="Increase">+</button>
+      </div>
+    `;
 
-        function setBusy(variantId, busy) {
+        const setBusy = (variantId, busy) => {
             const action = container.querySelector(`.binga-action[data-variant-id="${variantId}"]`);
             if (!action) return;
             action.querySelectorAll("button").forEach((b) => (b.disabled = !!busy));
+        };
+
+        function updateActionUI(variantId, qty) {
+            const action = container.querySelector(`.binga-action[data-variant-id="${variantId}"]`);
+            if (!action) return;
+
+            if (qty <= 0) action.innerHTML = renderAddButton(variantId);
+            else action.innerHTML = renderStepper(variantId, qty);
+
+            bindActionHandlersForVariant(variantId);
         }
 
         function bindActionHandlersForVariant(variantId) {
@@ -239,7 +259,7 @@
                     addBtn.textContent = "Adding...";
 
                     try {
-                        const updatedCart = await onAddOnly(variantId); // return latest cart
+                        const updatedCart = await onAddOnly(variantId);
                         setCartCount(updatedCart);
                         const qty = getVariantQtyFromCart(updatedCart, variantId);
                         updateActionUI(variantId, qty);
@@ -307,17 +327,6 @@
             }
         }
 
-        function updateActionUI(variantId, qty) {
-            const action = container.querySelector(`.binga-action[data-variant-id="${variantId}"]`);
-            if (!action) return;
-
-            if (qty <= 0) action.innerHTML = renderAddButton(variantId);
-            else action.innerHTML = renderStepper(variantId, qty);
-
-            // Since we replaced HTML, re-bind handlers
-            bindActionHandlersForVariant(variantId);
-        }
-
         if (!products?.length) {
             container.innerHTML = `
         <h3>No recommendations available</h3>
@@ -327,39 +336,29 @@
         </div>
       `;
             container.querySelector("#binga-checkout-now")?.addEventListener("click", onCheckoutNow);
-
-            // init cart count
             getCart().then(setCartCount).catch(() => { });
             return;
         }
 
         const productsHTML = products
-            .map(
-                (p) => `
-        <div class="binga-product">
-          ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
-          <div class="binga-product-title">${p.title}</div>
-          ${(() => {
-                        const original = Number(p.price);
-                        const d = discountedPrice(original, 10);
-                        if (!d) return `<div class="binga-product-price">${fmtMoney(original)}</div>`;
+            .map((p) => {
+                const { original, discounted } = calcDiscount(p.price, discountPercent);
+                return `
+          <div class="binga-product">
+            ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
+            <div class="binga-product-title">${p.title}</div>
 
-                        return `
-                                <div class="binga-product-price">
-                                <div style="text-decoration:line-through;opacity:.6;">${fmtMoney(original)}</div>
-                                <div style="font-weight:700;">
-                                    ${fmtMoney(d)} <span style="font-size:12px;">(10% OFF)</span>
-                                </div>
-                                </div>
-                            `;
-                    })()}
+            <div class="binga-product-price">
+              <div class="orig">${original}</div>
+              <div class="disc">${discounted}<span class="pct">(${discountPercent}% off)</span></div>
+            </div>
 
-          <div class="binga-action" data-variant-id="${p.variantId}">
-            ${renderAddButton(p.variantId)}
+            <div class="binga-action" data-variant-id="${p.variantId}">
+              ${renderAddButton(p.variantId)}
+            </div>
           </div>
-        </div>
-      `
-            )
+        `;
+            })
             .join("");
 
         container.innerHTML = `
@@ -375,7 +374,6 @@
 
         container.querySelector("#binga-skip")?.addEventListener("click", onCheckoutNow);
 
-        // Initialize action UI per product based on current cart
         (async () => {
             try {
                 const cart = await getCart();
@@ -384,9 +382,7 @@
                     const qty = getVariantQtyFromCart(cart, p.variantId);
                     updateActionUI(String(p.variantId), qty);
                 });
-            } catch (e) {
-                // ignore
-            }
+            } catch { }
         })();
     }
 
@@ -398,12 +394,13 @@
         const out = await res.json();
         log("Proxy response:", out);
 
-        if (!out?.ok) return [];
-        return out.products || [];
+        return {
+            products: out?.ok ? (out.products || []) : [],
+            discountPercent: Number(out?.discountPercent ?? 10),
+        };
     }
 
     async function interceptFlow({ mode, clickedEl, event }) {
-        // mode: "buy_now" (product page) OR "checkout" (cart/mini-cart)
         event.preventDefault();
         event.stopPropagation();
         if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
@@ -428,10 +425,12 @@
         const exclude = [...excludeFromCart, currentProductId].filter(Boolean).join(",");
 
         let products = [];
-        try {
-            products = await fetchRecommendations(exclude);
-            products = (products || []).filter(p => p.available !== false);
+        let discountPercent = 10;
 
+        try {
+            const reco = await fetchRecommendations(exclude);
+            discountPercent = reco.discountPercent;
+            products = (reco.products || []).filter((p) => p.available !== false);
         } catch (e) {
             log("Recommendation fetch failed:", e);
             close();
@@ -445,15 +444,16 @@
 
         renderProducts(
             products,
+            discountPercent,
 
-            // onAddOnly: add recommended product ONLY, return updated cart, do NOT redirect
+            // onAddOnly: add recommended item ONLY, and mark it for the Function
             async (selectedVariantId) => {
-                await addVariantToCart(Number(selectedVariantId), 1, { _binga_upsell: "1" });
+                await addVariantToCart(Number(selectedVariantId), 1, { [UPSALE_MARKER_KEY]: UPSALE_MARKER_VALUE });
                 const newCart = await getCart();
                 return newCart;
             },
 
-            // onCheckoutNow: redirect to checkout (and add main product if mode=buy_now)
+            // onCheckoutNow
             async () => {
                 close();
 
@@ -467,7 +467,6 @@
         );
     }
 
-    // Capture phase so we beat theme handlers
     document.addEventListener(
         "click",
         (e) => {

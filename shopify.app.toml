@@ -8,27 +8,26 @@ embedded = true
 [build]
 automatically_update_urls_on_dev = true
 dev_store_url = "binga-8771.myshopify.com"
-include_config_on_deploy = true
 
 [webhooks]
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
-
-  [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,write_discounts,read_discounts"
+scopes = "read_discounts,read_products,write_discounts"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
 
 [app_proxy]
-url = "/proxy"
+url = "https://example.com/proxy"
 subpath = "binga-reco"
 prefix = "apps"

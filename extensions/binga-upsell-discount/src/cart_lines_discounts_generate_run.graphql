@@ -1,8 +1,12 @@
 query RunInput {
+  discount {
+    metafield(namespace: "$app:binga", key: "upsell_discount_config") {
+      value
+    }
+  }
   cart {
     lines {
       id
-      quantity
       attribute(key: "_binga_upsell") {
         value
       }
