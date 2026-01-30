@@ -26,15 +26,20 @@
         return res.json();
     }
 
-    async function addVariantToCart(variantId, quantity) {
+    async function addVariantToCart(variantId, quantity, properties) {
         const res = await fetch("/cart/add.js", {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ id: Number(variantId), quantity: Number(quantity || 1) }),
+            body: JSON.stringify({
+                id: Number(variantId),
+                quantity: Number(quantity || 1),
+                ...(properties ? { properties } : {}),
+            }),
         });
         if (!res.ok) throw new Error("add_to_cart_failed");
         return res.json();
     }
+
 
     async function changeLineQuantity(line, quantity) {
         const res = await fetch("/cart/change.js", {
@@ -67,6 +72,19 @@
         const qty = qtyInput?.value ? Number(qtyInput.value) : 1;
         return { variantId, qty };
     }
+
+    function fmtMoney(n) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return "";
+        return `$${v.toFixed(2)}`;
+    }
+
+    function discountedPrice(n, percent = 10) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return null;
+        return v * (1 - percent / 100);
+    }
+
 
     function setCartCount(cart) {
         const el = document.querySelector("#binga-cart-count");
@@ -321,7 +339,21 @@
         <div class="binga-product">
           ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
           <div class="binga-product-title">${p.title}</div>
-          <div class="binga-product-price">$${p.price ?? ""}</div>
+          ${(() => {
+                        const original = Number(p.price);
+                        const d = discountedPrice(original, 10);
+                        if (!d) return `<div class="binga-product-price">${fmtMoney(original)}</div>`;
+
+                        return `
+                                <div class="binga-product-price">
+                                <div style="text-decoration:line-through;opacity:.6;">${fmtMoney(original)}</div>
+                                <div style="font-weight:700;">
+                                    ${fmtMoney(d)} <span style="font-size:12px;">(10% OFF)</span>
+                                </div>
+                                </div>
+                            `;
+                    })()}
+
           <div class="binga-action" data-variant-id="${p.variantId}">
             ${renderAddButton(p.variantId)}
           </div>
@@ -416,7 +448,7 @@
 
             // onAddOnly: add recommended product ONLY, return updated cart, do NOT redirect
             async (selectedVariantId) => {
-                await addVariantToCart(Number(selectedVariantId), 1);
+                await addVariantToCart(Number(selectedVariantId), 1, { _binga_upsell: "1" });
                 const newCart = await getCart();
                 return newCart;
             },
