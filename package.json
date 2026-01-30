@@ -4,6 +4,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "shopify app dev",
+    "dev:reset": "shopify app dev --reset",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy",
