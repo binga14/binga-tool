@@ -17,11 +17,11 @@ function shuffle<T>(arr: T[]) {
 }
 
 function clampPercent(n: number) {
-    if (!Number.isFinite(n)) return 10;
+    if (!Number.isFinite(n)) return 0;
     return Math.max(0, Math.min(90, Math.round(n)));
 }
 
-async function getDiscountPercent(admin: any) {
+async function getConfig(admin: any): Promise<{ defaultPercent: number; overrides: Record<string, number> }> {
     try {
         const r = await admin.graphql(
             `#graphql
@@ -35,12 +35,20 @@ async function getDiscountPercent(admin: any) {
         );
         const j = await r.json();
         const raw = j?.data?.shop?.metafield?.value;
-        if (!raw) return 10;
+        if (!raw) return { defaultPercent: 10, overrides: {} };
 
         const parsed = JSON.parse(raw);
-        return clampPercent(Number(parsed?.defaultPercent ?? 10));
+        const defaultPercent = clampPercent(Number(parsed?.defaultPercent ?? 10));
+        const overridesRaw = (parsed?.overrides ?? {}) as Record<string, number>;
+
+        const overrides: Record<string, number> = {};
+        Object.keys(overridesRaw).forEach((k) => {
+            overrides[String(k)] = clampPercent(Number(overridesRaw[k]));
+        });
+
+        return { defaultPercent, overrides };
     } catch {
-        return 10;
+        return { defaultPercent: 10, overrides: {} };
     }
 }
 
@@ -55,10 +63,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
         const { admin, session } = await authenticate.public.appProxy(request);
 
         if (!admin || !session?.accessToken) {
-            return new Response(
-                JSON.stringify({ ok: false, error: "No offline session. Reinstall app." }),
-                { status: 401, headers }
-            );
+            return new Response(JSON.stringify({ ok: false, error: "No offline session. Reinstall app." }), {
+                status: 401,
+                headers,
+            });
         }
 
         const url = new URL(request.url);
@@ -71,9 +79,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         const limitRaw = Number(url.searchParams.get("limit") || "3");
         const limit = Math.max(1, Math.min(6, Number.isFinite(limitRaw) ? limitRaw : 3));
 
-        const discountPercent = await getDiscountPercent(admin);
+        const cfg = await getConfig(admin);
 
-        // Fetch more than needed, we will filter + pick available variants
         const resp = await admin.graphql(
             `#graphql
       query Products($first: Int!) {
@@ -95,7 +102,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
         const json = await resp.json();
         const products = json?.data?.products?.nodes ?? [];
 
-        // Exclude items, then keep only products that have at least one available variant
         const candidates = products
             .filter((p: any) => !exclude.includes(gidToId(p.id)))
             .filter((p: any) => (p?.variants?.nodes || []).some((v: any) => v?.availableForSale === true));
@@ -103,25 +109,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
         shuffle(candidates);
 
         const picked = candidates
-            .slice(0, limit * 3) // extra buffer in case some mapping drops
+            .slice(0, limit * 3)
             .map((p: any) => {
+                const pid = gidToId(p.id);
                 const variants = p?.variants?.nodes || [];
                 const v = variants.find((x: any) => x?.availableForSale === true) || variants[0];
 
+                const discountPercent =
+                    cfg.overrides[String(pid)] !== undefined ? cfg.overrides[String(pid)] : cfg.defaultPercent;
+
                 return {
-                    id: gidToId(p.id),
+                    id: pid,
                     title: p.title,
                     url: `/products/${p.handle}`,
                     image: p.featuredImage?.url ?? null,
                     variantId: v?.id ? Number(gidToId(v.id)) : null,
                     price: v?.price ?? null,
                     available: v?.availableForSale ?? false,
+                    discountPercent,
                 };
             })
             .filter((p: any) => p.variantId && p.available === true)
             .slice(0, limit);
 
-        return new Response(JSON.stringify({ ok: true, discountPercent, products: picked }), { headers });
+        return new Response(JSON.stringify({ ok: true, products: picked }), { headers });
     } catch (e: any) {
         return new Response(JSON.stringify({ ok: false, error: e?.message || "Server error" }), {
             status: 500,

@@ -10,6 +10,14 @@ query RunInput {
       attribute(key: "_binga_upsell") {
         value
       }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          product {
+            id
+          }
+        }
+      }
     }
   }
 }

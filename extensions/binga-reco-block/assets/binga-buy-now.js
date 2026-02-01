@@ -342,7 +342,8 @@
 
         const productsHTML = products
             .map((p) => {
-                const { original, discounted } = calcDiscount(p.price, discountPercent);
+                const pct = Number(p.discountPercent ?? 0);
+                const { original, discounted } = calcDiscount(p.price, pct);
                 return `
           <div class="binga-product">
             ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
@@ -350,7 +351,7 @@
 
             <div class="binga-product-price">
               <div class="orig">${original}</div>
-              <div class="disc">${discounted}<span class="pct">(${discountPercent}% off)</span></div>
+              <div class="disc">${discounted}<span class="pct">(${pct}% off)</span></div>
             </div>
 
             <div class="binga-action" data-variant-id="${p.variantId}">
