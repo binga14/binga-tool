@@ -15,6 +15,7 @@ import {
     Text,
     Pagination,
     Box,
+    Select,
 } from "@shopify/polaris";
 
 import { authenticate } from "../shopify.server";
@@ -25,6 +26,8 @@ const DISCOUNT_KEY = "upsell_discount_config";
 const DISCOUNT_NODE_ID_KEY = "upsell_discount_discountNodeId";
 
 const PAGE_SIZE = 10;
+
+type Urgency = "none" | "low" | "medium" | "high";
 
 function json(data: any, init?: ResponseInit) {
     return new Response(JSON.stringify(data), {
@@ -62,6 +65,14 @@ function discounted(price: number, percent: number) {
     return price * (1 - percent / 100);
 }
 
+function isUrgency(v: any): v is Urgency {
+    return v === "none" || v === "low" || v === "medium" || v === "high";
+}
+
+function asObject(v: any) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+}
+
 async function getShopId(admin: any) {
     const resp = await admin.graphql(`
     query GetShopId { shop { id } }
@@ -82,22 +93,32 @@ async function getShopConfig(admin: any) {
     const j = await resp.json();
     const raw = j?.data?.shop?.metafield?.value;
 
-    if (!raw) return { defaultPercent: 10, overrides: {} as Record<string, number> };
+    if (!raw) return { defaultPercent: 10, overrides: {} as Record<string, number>, urgencies: {} as Record<string, Urgency> };
 
     try {
         const parsed = JSON.parse(raw);
         const defaultPercent = clampPercent(Number(parsed?.defaultPercent ?? 10));
         const overrides = (parsed?.overrides ?? {}) as Record<string, number>;
+        const urgenciesRaw = asObject(parsed?.urgencies);
 
-        // normalize values
-        const clean: Record<string, number> = {};
+        // normalize override values
+        const cleanOverrides: Record<string, number> = {};
         Object.keys(overrides).forEach((k) => {
-            clean[String(k)] = clampPercent(Number(overrides[k]));
+            cleanOverrides[String(k)] = clampPercent(Number(overrides[k]));
         });
 
-        return { defaultPercent, overrides: clean };
+        // normalize urgencies
+        const cleanUrgencies: Record<string, Urgency> = {};
+        Object.keys(urgenciesRaw).forEach((k) => {
+            const val = urgenciesRaw[k];
+            if (isUrgency(val) && val !== "none") {
+                cleanUrgencies[String(k)] = val;
+            }
+        });
+
+        return { defaultPercent, overrides: cleanOverrides, urgencies: cleanUrgencies };
     } catch {
-        return { defaultPercent: 10, overrides: {} as Record<string, number> };
+        return { defaultPercent: 10, overrides: {} as Record<string, number>, urgencies: {} as Record<string, Urgency> };
     }
 }
 
@@ -166,7 +187,6 @@ async function getProductsPage(admin: any, args: { query: string; after?: string
     const after = args.after || null;
     const before = args.before || null;
 
-    // We’ll paginate both directions using after/before.
     const variables: any = {
         first: before ? null : PAGE_SIZE,
         after: before ? null : after,
@@ -226,6 +246,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({
         defaultPercent: cfg.defaultPercent,
         overrides: cfg.overrides,
+        urgencies: cfg.urgencies, // ✅ NEW
         products: page.products,
         pageInfo: page.pageInfo,
         q: search,
@@ -240,28 +261,49 @@ export async function action({ request }: ActionFunctionArgs) {
 
         const defaultPercent = clampPercent(Number(String(form.get("defaultPercent") ?? "10")));
         const overridesRaw = String(form.get("overridesJson") ?? "{}");
+        const urgenciesRaw = String(form.get("urgenciesJson") ?? "{}"); // ✅ NEW
 
         let overrides = {} as Record<string, number>;
         try {
             const parsed = JSON.parse(overridesRaw);
-            overrides = (parsed && typeof parsed === "object") ? parsed : {};
+            overrides = parsed && typeof parsed === "object" ? parsed : {};
         } catch {
             overrides = {};
         }
 
-        // Normalize overrides + keep only meaningful values to keep metafield small:
-        // - if override == defaultPercent, we remove it
-        // - if override is 0, we keep it (means no discount)
-        const clean: Record<string, number> = {};
+        let urgenciesIn = {} as Record<string, Urgency>;
+        try {
+            const parsed = JSON.parse(urgenciesRaw);
+            urgenciesIn = parsed && typeof parsed === "object" ? parsed : {};
+        } catch {
+            urgenciesIn = {};
+        }
+
+        // Keep your existing override cleanup logic exactly:
+        const cleanOverrides: Record<string, number> = {};
         Object.keys(overrides).forEach((k) => {
             const pid = String(k);
             const pct = clampPercent(Number(overrides[k]));
             if (pct === defaultPercent) return; // same as default => unnecessary
-            clean[pid] = pct;
+            cleanOverrides[pid] = pct; // keep 0 too (means no discount)
+        });
+
+        // ✅ Clean urgencies (store only non-"none" to keep metafield small)
+        const cleanUrgencies: Record<string, Urgency> = {};
+        Object.keys(asObject(urgenciesIn)).forEach((k) => {
+            const pid = String(k);
+            const val = (urgenciesIn as any)[k];
+            if (isUrgency(val) && val !== "none") cleanUrgencies[pid] = val;
         });
 
         const shopId = await getShopId(admin);
-        const configJson = JSON.stringify({ defaultPercent, overrides: clean });
+
+        // ✅ Save config with urgencies included (backward compatible)
+        const configJson = JSON.stringify({
+            defaultPercent,
+            overrides: cleanOverrides,
+            urgencies: cleanUrgencies,
+        });
 
         // 1) Save on SHOP (proxy reads this)
         await metafieldsSetJson(admin, shopId, SHOP_KEY, configJson);
@@ -285,7 +327,12 @@ export async function action({ request }: ActionFunctionArgs) {
 
         await metafieldsSetJson(admin, discountNodeId, DISCOUNT_KEY, configJson);
 
-        return json({ ok: true, defaultPercent, savedOverridesCount: Object.keys(clean).length });
+        return json({
+            ok: true,
+            defaultPercent,
+            savedOverridesCount: Object.keys(cleanOverrides).length,
+            savedUrgenciesCount: Object.keys(cleanUrgencies).length, // ✅ NEW (optional info)
+        });
     } catch (e: any) {
         return json({ ok: false, error: e?.message || "Save failed" }, { status: 500 });
     }
@@ -295,8 +342,14 @@ export default function AppSettings() {
     const data = useLoaderData() as {
         defaultPercent: number;
         overrides: Record<string, number>;
+        urgencies: Record<string, Urgency>; // ✅ NEW
         products: ProductRow[];
-        pageInfo: { hasNextPage: boolean; hasPreviousPage: boolean; startCursor: string | null; endCursor: string | null };
+        pageInfo: {
+            hasNextPage: boolean;
+            hasPreviousPage: boolean;
+            startCursor: string | null;
+            endCursor: string | null;
+        };
         q: string;
     };
 
@@ -308,16 +361,30 @@ export default function AppSettings() {
     const [defaultValue, setDefaultValue] = useState<string>("");
     const [searchValue, setSearchValue] = useState<string>("");
 
-    // Keep a local editable overrides map (start from server config)
+    // Your existing overrides state (unchanged)
     const [overrides, setOverrides] = useState<Record<string, number>>({});
+
+    // ✅ NEW: urgencies state
+    const [urgencies, setUrgencies] = useState<Record<string, Urgency>>({});
 
     useEffect(() => {
         setDefaultValue(String(data?.defaultPercent ?? 10));
         setSearchValue(data?.q ?? "");
         setOverrides(data?.overrides ?? {});
-    }, [data?.defaultPercent, data?.q]); // overrides is set from server once per navigation
+        setUrgencies(data?.urgencies ?? {}); // ✅ NEW
+    }, [data?.defaultPercent, data?.q, data?.overrides, data?.urgencies]);
 
     const defaultPercent = clampPercent(Number(defaultValue || 0));
+
+    const urgencyOptions = useMemo(
+        () => [
+            { label: "Not urgent", value: "none" },
+            { label: "Low urgency", value: "low" },
+            { label: "Medium urgency", value: "medium" },
+            { label: "High urgency", value: "high" },
+        ],
+        []
+    );
 
     const rows = useMemo(() => {
         return (data.products || []).map((p) => {
@@ -332,9 +399,10 @@ export default function AppSettings() {
                 pct,
                 after,
                 hasOverride: override !== undefined,
+                urgency: urgencies[String(p.id)] ?? "none", // ✅ NEW
             };
         });
-    }, [data.products, overrides, defaultPercent]);
+    }, [data.products, overrides, defaultPercent, urgencies]);
 
     const buildUrl = (params: Record<string, string | null | undefined>) => {
         const u = new URL(window.location.href);
@@ -360,6 +428,10 @@ export default function AppSettings() {
                         <Banner tone="success" title="Saved">
                             <p>
                                 Default discount is now {actionData.defaultPercent}%. Saved overrides: {actionData.savedOverridesCount}.
+                                {" "}
+                                {typeof actionData.savedUrgenciesCount === "number"
+                                    ? `Saved urgencies: ${actionData.savedUrgenciesCount}.`
+                                    : null}
                             </p>
                         </Banner>
                     )}
@@ -398,11 +470,7 @@ export default function AppSettings() {
                                             >
                                                 Search
                                             </Button>
-                                            <Button
-                                                variant="tertiary"
-                                                url={buildUrl({ q: null, after: null, before: null })}
-                                                as={Link}
-                                            >
+                                            <Button variant="tertiary" url={buildUrl({ q: null, after: null, before: null })} as={Link}>
                                                 Clear
                                             </Button>
                                         </InlineStack>
@@ -416,8 +484,11 @@ export default function AppSettings() {
                                 </div>
                             </InlineStack>
 
-                            {/* Send overrides as a JSON string */}
+                            {/* Your existing overrides payload */}
                             <input type="hidden" name="overridesJson" value={JSON.stringify(overrides)} />
+
+                            {/* ✅ NEW: urgencies payload */}
+                            <input type="hidden" name="urgenciesJson" value={JSON.stringify(urgencies)} />
 
                             <div style={{ marginTop: 18 }}>
                                 <IndexTable
@@ -430,6 +501,7 @@ export default function AppSettings() {
                                         { title: "Discount (%)" },
                                         { title: "After discount" },
                                         { title: "Override" },
+                                        { title: "Urgency to sell" }, // ✅ NEW COLUMN
                                     ]}
                                 >
                                     {rows.map((r, idx) => {
@@ -440,11 +512,7 @@ export default function AppSettings() {
                                             <IndexTable.Row id={pid} key={pid} position={idx}>
                                                 <IndexTable.Cell>
                                                     <InlineStack gap="300" blockAlign="center">
-                                                        <Thumbnail
-                                                            source={r.product.image || ""}
-                                                            alt={r.product.title}
-                                                            size="small"
-                                                        />
+                                                        <Thumbnail source={r.product.image || ""} alt={r.product.title} size="small" />
                                                         <div>
                                                             <Text as="p" fontWeight="semibold">
                                                                 {r.product.title}
@@ -458,15 +526,14 @@ export default function AppSettings() {
 
                                                 <IndexTable.Cell>{money(r.base)}</IndexTable.Cell>
 
+                                                {/* ✅ Your existing override edit behavior (unchanged) */}
                                                 <IndexTable.Cell>
                                                     <TextField
                                                         labelHidden
                                                         label="Discount (%)"
                                                         type="number"
                                                         autoComplete="off"
-                                                        value={String(
-                                                            currentOverride !== undefined ? currentOverride : r.pct
-                                                        )}
+                                                        value={String(currentOverride !== undefined ? currentOverride : r.pct)}
                                                         onChange={(v) => {
                                                             const next = clampPercent(Number(v || 0));
                                                             setOverrides((prev) => ({ ...prev, [pid]: next }));
@@ -478,13 +545,13 @@ export default function AppSettings() {
 
                                                 <IndexTable.Cell>{money(r.after)}</IndexTable.Cell>
 
+                                                {/* ✅ Your existing buttons (unchanged) */}
                                                 <IndexTable.Cell>
                                                     <InlineStack gap="200">
                                                         <Button
                                                             size="micro"
                                                             variant="tertiary"
                                                             onClick={() => {
-                                                                // remove override => uses defaultPercent
                                                                 setOverrides((prev) => {
                                                                     const copy = { ...prev };
                                                                     delete copy[pid];
@@ -499,13 +566,36 @@ export default function AppSettings() {
                                                             size="micro"
                                                             variant="secondary"
                                                             onClick={() => {
-                                                                // set override to 0 => no discount
                                                                 setOverrides((prev) => ({ ...prev, [pid]: 0 }));
                                                             }}
                                                         >
                                                             No discount
                                                         </Button>
                                                     </InlineStack>
+                                                </IndexTable.Cell>
+
+                                                {/* ✅ NEW: urgency dropdown per product */}
+                                                <IndexTable.Cell>
+                                                    <Select
+                                                        labelHidden
+                                                        label="Urgency"
+                                                        options={urgencyOptions}
+                                                        value={urgencies[pid] ?? "none"}
+                                                        onChange={(val) => {
+                                                            const next = isUrgency(val) ? (val as Urgency) : "none";
+                                                            setUrgencies((prev) => {
+                                                                const copy = { ...prev };
+
+                                                                // keep JSON small: remove if "none"
+                                                                if (next === "none") {
+                                                                    delete copy[pid];
+                                                                } else {
+                                                                    copy[pid] = next;
+                                                                }
+                                                                return copy;
+                                                            });
+                                                        }}
+                                                    />
                                                 </IndexTable.Cell>
                                             </IndexTable.Row>
                                         );
@@ -515,8 +605,7 @@ export default function AppSettings() {
                                 <div style={{ marginTop: 16 }}>
                                     <InlineStack align="space-between" blockAlign="center">
                                         <Text as="p" tone="subdued">
-                                            Showing {rows.length} products per page (max {PAGE_SIZE}).
-                                            Save your changes before switching pages.
+                                            Showing {rows.length} products per page (max {PAGE_SIZE}). Save your changes before switching pages.
                                         </Text>
 
                                         <Pagination
