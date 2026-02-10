@@ -1,0 +1,36 @@
+query RunInput {
+  cart {
+    attribute {
+      key
+      value
+    }
+    lines {
+      id
+      quantity
+      attribute {
+        key
+        value
+      }
+      merchandise {
+        ... on ProductVariant {
+          id
+          product {
+            id
+          }
+        }
+      }
+      cost {
+        amountPerQuantity {
+          amount
+          currencyCode
+        }
+      }
+    }
+  }
+
+  discount {
+    metafield(namespace: "$app:binga", key: "upsell_discount_config") {
+      value
+    }
+  }
+}

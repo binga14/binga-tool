@@ -16,6 +16,7 @@ export default function App() {
   const { apiKey } = useLoaderData<typeof loader>();
 
   return (
+<<<<<<< Updated upstream
     <AppProvider embedded apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Home</s-link>
@@ -23,6 +24,19 @@ export default function App() {
       </s-app-nav>
       <Outlet />
     </AppProvider>
+=======
+    <ShopifyAppProvider embedded apiKey={apiKey}>
+      <PolarisAppProvider i18n={enTranslations}>
+        <s-app-nav>
+          <s-link href="/app">Home</s-link>
+          <s-link href="/app/settings">Settings</s-link>
+          <s-link href="/app/analytics">Impact</s-link>
+        </s-app-nav>
+
+        <Outlet />
+      </PolarisAppProvider>
+    </ShopifyAppProvider>
+>>>>>>> Stashed changes
   );
 }
 

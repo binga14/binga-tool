@@ -20,6 +20,267 @@
         "button[href^='/checkout']"
     ].join(",");
 
+<<<<<<< Updated upstream
+=======
+    // Marker for Shopify Function (only for upsell items)
+    const UPSALE_MARKER_KEY = "_binga_upsell";
+    const UPSALE_MARKER_VALUE = "1";
+
+    // NEW: pass per-line discount percent (Function may use this)
+    const UPSALE_PCT_KEY = "_binga_pct"; // string percent, e.g. "10"
+
+    // NEW: Order/cart-level session marker for analytics gating
+    const BINGA_SESSION_KEY = "_binga_session";
+    const BINGA_SESSION_VALUE = "1";
+
+    // -------------------------
+    // Recently viewed tracking (localStorage)
+    // -------------------------
+    const BINGA_VIEW_KEY = "__binga_viewed_products_v1__";
+    const BINGA_VIEW_MAX_STORE = 60; // keep at most 60 products in storage
+    const BINGA_VIEW_MAX_SEND = 25; // send at most 25 to proxy (keep URL small)
+
+    function safeJsonParse(str, fallback) {
+        try {
+            return JSON.parse(str);
+        } catch {
+            return fallback;
+        }
+    }
+
+    function loadViewedMap() {
+        const raw = localStorage.getItem(BINGA_VIEW_KEY);
+        const data = safeJsonParse(raw, {});
+        return data && typeof data === "object" ? data : {};
+    }
+
+    function saveViewedMap(map) {
+        try {
+            localStorage.setItem(BINGA_VIEW_KEY, JSON.stringify(map));
+        } catch { }
+    }
+
+    function recordProductView(productId) {
+        const pid = String(productId || "").trim();
+        if (!pid) return;
+
+        const now = Date.now();
+        const map = loadViewedMap();
+
+        const prev = map[pid] || {};
+        const nextCount = Math.min(999, Number(prev.c || 0) + 1);
+
+        map[pid] = { c: nextCount, t: now };
+
+        // prune oldest if too many
+        const entries = Object.entries(map);
+        if (entries.length > BINGA_VIEW_MAX_STORE) {
+            entries.sort((a, b) => Number(a[1]?.t || 0) - Number(b[1]?.t || 0)); // oldest first
+            const toRemove = entries.length - BINGA_VIEW_MAX_STORE;
+            for (let i = 0; i < toRemove; i++) delete map[entries[i][0]];
+        }
+
+        saveViewedMap(map);
+    }
+
+    function buildViewedParam(maxSend = BINGA_VIEW_MAX_SEND) {
+        const map = loadViewedMap();
+        const entries = Object.entries(map)
+            .map(([id, v]) => ({
+                id: String(id),
+                c: Number(v?.c || 0),
+                t: Number(v?.t || 0),
+            }))
+            .filter((x) => x.id && x.c > 0 && x.t > 0)
+            .sort((a, b) => b.t - a.t) // most recent first
+            .slice(0, maxSend);
+
+        // format: "id:count:timestamp|id:count:timestamp"
+        return entries.map((x) => `${x.id}:${x.c}:${x.t}`).join("|");
+    }
+
+    // record current product view (only works where productId is available)
+    if (window.BINGA_BUY_NOW?.productId) {
+        recordProductView(window.BINGA_BUY_NOW.productId);
+    }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // Prevent double-running if user clicks twice quickly
+    let FLOW_ACTIVE = false;
+
+    function isVisible(el) {
+        if (!el) return false;
+        const s = window.getComputedStyle(el);
+        if (s.display === "none" || s.visibility === "hidden" || Number(s.opacity || 1) === 0) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }
+
+    function firstVisible(root, selector) {
+        const list = Array.from((root || document).querySelectorAll(selector));
+        return list.find(isVisible) || null;
+    }
+
+    function unlockScrollAndInert() {
+        document.documentElement.classList.remove("overflow-hidden", "no-scroll", "lock-scroll");
+        document.body.classList.remove("overflow-hidden", "no-scroll", "lock-scroll");
+        document.body.style.removeProperty("overflow");
+
+        document.querySelector("#MainContent")?.removeAttribute("inert");
+        document.querySelector("main")?.removeAttribute("inert");
+    }
+
+    function findCartDrawerCandidates() {
+        const c = [];
+        // Dialog-based drawers
+        c.push(...Array.from(document.querySelectorAll("dialog[open]")));
+        c.push(document.querySelector("dialog#CartDrawer"));
+        c.push(document.querySelector("dialog[id*='CartDrawer']"));
+        c.push(document.querySelector("dialog[id*='cart']"));
+        c.push(document.querySelector("dialog[class*='cart']"));
+
+        // Dawn / OS2
+        c.push(document.querySelector("cart-drawer"));
+        c.push(document.querySelector("#CartDrawer"));
+        c.push(document.querySelector("[id*='CartDrawer']"));
+        c.push(document.querySelector(".cart-drawer"));
+        c.push(document.querySelector(".drawer"));
+
+        return c.filter(Boolean);
+    }
+
+    function pickOpenCartDrawer() {
+        const candidates = findCartDrawerCandidates();
+        let best = candidates.find(isVisible) || null;
+
+        if (!best) {
+            best =
+                candidates.find((el) => {
+                    const id = (el.id || "").toLowerCase();
+                    const cls = (el.className || "").toString().toLowerCase();
+                    return id.includes("cart") || cls.includes("cart");
+                }) || null;
+        }
+        return best;
+    }
+
+    // Force-hide state while modal is open (so drawer can’t overlap)
+    let forcedHidden = null;
+
+    function forceHideElement(el) {
+        if (!el) return null;
+        const prev = el.getAttribute("style") || "";
+        el.style.setProperty("visibility", "hidden", "important");
+        el.style.setProperty("pointer-events", "none", "important");
+        el.style.setProperty("display", "none", "important");
+        return { el, prev };
+    }
+
+    function forceHideOverlays() {
+        const overlays = [
+            "#CartDrawer-Overlay",
+            ".drawer-overlay",
+            ".drawer__overlay",
+            ".cart-drawer__overlay",
+            ".modal__overlay",
+            ".overlay",
+        ];
+
+        const saved = [];
+        for (const sel of overlays) {
+            const o = firstVisible(document, sel);
+            if (o) {
+                const s = forceHideElement(o);
+                if (s) saved.push(s);
+            }
+        }
+        return saved;
+    }
+
+    function restoreForcedHidden(state) {
+        if (!state) return;
+        try {
+            if (state.drawer?.el) state.drawer.el.setAttribute("style", state.drawer.prev || "");
+            (state.overlays || []).forEach((o) => {
+                if (o?.el) o.el.setAttribute("style", o.prev || "");
+            });
+        } catch { }
+    }
+
+    function drawerStillVisible() {
+        const root = pickOpenCartDrawer();
+        return !!(root && isVisible(root));
+    }
+
+    async function closeCartDrawerHard() {
+        const root = pickOpenCartDrawer();
+        if (!root) {
+            unlockScrollAndInert();
+            return false;
+        }
+
+        // If root is dialog OR contains open dialog => close it
+        const dialog =
+            root.tagName === "DIALOG"
+                ? root
+                : root.querySelector?.("dialog[open]") || document.querySelector("dialog[open]#CartDrawer");
+
+        try {
+            if (dialog && typeof dialog.close === "function") {
+                dialog.close();
+                dialog.removeAttribute("open");
+            }
+        } catch { }
+
+        // If root has a close method
+        try {
+            if (typeof root.close === "function") root.close();
+        } catch { }
+
+        // Click close button inside drawer
+        const closeBtn =
+            firstVisible(root, "button[aria-label*='Close']") ||
+            firstVisible(root, "button[name='close']") ||
+            firstVisible(root, "button.drawer__close") ||
+            firstVisible(root, "button.cart-drawer__close") ||
+            firstVisible(root, ".drawer__close") ||
+            firstVisible(root, ".cart-drawer__close") ||
+            null;
+
+        if (closeBtn) {
+            try {
+                closeBtn.click();
+            } catch { }
+        }
+
+        // Click overlay/backdrop if exists
+        const overlay =
+            firstVisible(document, "#CartDrawer-Overlay") ||
+            firstVisible(document, ".drawer-overlay") ||
+            firstVisible(document, ".drawer__overlay") ||
+            firstVisible(document, ".cart-drawer__overlay");
+
+        if (overlay) {
+            try {
+                overlay.click();
+            } catch { }
+        }
+
+        await sleep(120);
+
+        // Still visible? force-hide while our modal is open
+        if (drawerStillVisible()) {
+            const drawerSave = forceHideElement(root);
+            const overlaysSave = forceHideOverlays();
+            forcedHidden = { drawer: drawerSave, overlays: overlaysSave };
+        }
+
+        unlockScrollAndInert();
+        return true;
+    }
+
+>>>>>>> Stashed changes
     async function getCart() {
         const res = await fetch("/cart.js", { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error("cart_fetch_failed");
@@ -36,6 +297,64 @@
         return res.json();
     }
 
+<<<<<<< Updated upstream
+=======
+    async function markBingaSession() {
+        // Merge existing cart attributes to avoid overwriting other attributes
+        let attrs = { [BINGA_SESSION_KEY]: BINGA_SESSION_VALUE };
+
+        try {
+            const cart = await getCart();
+            attrs = {
+                ...(cart?.attributes || {}),
+                [BINGA_SESSION_KEY]: BINGA_SESSION_VALUE,
+            };
+        } catch {
+            // ignore cart fetch failure; fallback to single attribute
+        }
+
+        const res = await fetch("/cart/update.js", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ attributes: attrs }),
+        });
+
+        if (!res.ok) throw new Error("mark_binga_session_failed");
+        return res.json();
+    }
+
+    // Best effort so UX isn't blocked on slow network
+    async function markBingaSessionBestEffort(timeoutMs = 900) {
+        try {
+            await Promise.race([markBingaSession(), sleep(timeoutMs)]);
+        } catch (e) {
+            log("mark session failed:", e);
+        }
+    }
+
+    async function changeLineQuantity(line, quantity) {
+        const res = await fetch("/cart/change.js", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ line: Number(line), quantity: Number(quantity) }),
+        });
+        if (!res.ok) throw new Error("change_line_failed");
+        return res.json();
+    }
+
+    function getVariantQtyFromCart(cart, variantId) {
+        const id = Number(variantId);
+        const item = (cart?.items || []).find((i) => Number(i.variant_id) === id);
+        return item ? Number(item.quantity || 0) : 0;
+    }
+
+    function getLineIndexForVariant(cart, variantId) {
+        const id = Number(variantId);
+        const idx = (cart?.items || []).findIndex((i) => Number(i.variant_id) === id);
+        return idx >= 0 ? idx + 1 : null; // 1-based
+    }
+
+>>>>>>> Stashed changes
     function getMainVariantAndQty(clickedEl) {
         let form = clickedEl.closest("form");
         if (!form) form = document.querySelector("form[action^='/cart/add']");
@@ -133,6 +452,138 @@
         const container = document.querySelector("#binga-buy-now-modal");
         if (!container) return;
 
+<<<<<<< Updated upstream
+=======
+        const renderAddButton = (variantId) => `
+      <button class="binga-btn primary binga-add" data-variant-id="${variantId}">
+        Add to cart
+      </button>
+    `;
+
+        const renderStepper = (variantId, qty) => `
+      <div class="binga-stepper" data-variant-id="${variantId}">
+        <button class="binga-btn binga-minus" data-variant-id="${variantId}" aria-label="Decrease">−</button>
+        <div class="binga-qty" data-variant-id="${variantId}">${qty}</div>
+        <button class="binga-btn binga-plus" data-variant-id="${variantId}" aria-label="Increase">+</button>
+      </div>
+    `;
+
+        const setBusy = (variantId, busy) => {
+            const action = container.querySelector(`.binga-action[data-variant-id="${variantId}"]`);
+            if (!action) return;
+            action.querySelectorAll("button").forEach((b) => (b.disabled = !!busy));
+        };
+
+        const setActionUI = (variantId, qty) => {
+            const action = container.querySelector(`.binga-action[data-variant-id="${variantId}"]`);
+            if (!action) return;
+            action.innerHTML = qty > 0 ? renderStepper(variantId, qty) : renderAddButton(variantId);
+            // NOTE: action dataset (including discount percent) stays intact
+        };
+
+        // ✅ Event delegation (bind once)
+        if (!container.dataset.bingaBound) {
+            container.dataset.bingaBound = "1";
+
+            container.addEventListener("click", async (e) => {
+                const skip = e.target.closest("#binga-skip, #binga-checkout-now");
+                if (skip) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+                    onCheckoutNow();
+                    return;
+                }
+
+                const addBtn = e.target.closest(".binga-add");
+                if (addBtn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+
+                    const variantId = addBtn.dataset.variantId;
+                    if (!variantId) return;
+
+                    const actionWrap = addBtn.closest(".binga-action");
+                    const pctFromDom = Number(actionWrap?.dataset?.discountPercent || "");
+                    const pct = Number.isFinite(pctFromDom) && pctFromDom > 0 ? pctFromDom : Number(discountPercent || 0);
+
+                    setBusy(variantId, true);
+                    const prev = addBtn.textContent;
+                    addBtn.textContent = "Adding...";
+
+                    try {
+                        const updatedCart = await onAddOnly(variantId, pct);
+                        setCartCount(updatedCart);
+                        const qty = getVariantQtyFromCart(updatedCart, variantId);
+                        setActionUI(variantId, qty);
+                    } catch (err) {
+                        log("Add failed:", err);
+                        addBtn.textContent = prev || "Add to cart";
+                    } finally {
+                        setBusy(variantId, false);
+                    }
+                    return;
+                }
+
+                const plusBtn = e.target.closest(".binga-plus");
+                if (plusBtn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+
+                    const variantId = plusBtn.dataset.variantId;
+                    if (!variantId) return;
+
+                    setBusy(variantId, true);
+                    try {
+                        const cart = await getCart();
+                        const line = getLineIndexForVariant(cart, variantId);
+                        const currentQty = getVariantQtyFromCart(cart, variantId);
+                        if (!line) throw new Error("line_not_found");
+
+                        const updatedCart = await changeLineQuantity(line, currentQty + 1);
+                        setCartCount(updatedCart);
+                        setActionUI(variantId, currentQty + 1);
+                    } catch (err) {
+                        log("Plus failed:", err);
+                    } finally {
+                        setBusy(variantId, false);
+                    }
+                    return;
+                }
+
+                const minusBtn = e.target.closest(".binga-minus");
+                if (minusBtn) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+
+                    const variantId = minusBtn.dataset.variantId;
+                    if (!variantId) return;
+
+                    setBusy(variantId, true);
+                    try {
+                        const cart = await getCart();
+                        const line = getLineIndexForVariant(cart, variantId);
+                        const currentQty = getVariantQtyFromCart(cart, variantId);
+                        if (!line) throw new Error("line_not_found");
+
+                        const nextQty = Math.max(0, currentQty - 1);
+                        const updatedCart = await changeLineQuantity(line, nextQty);
+                        setCartCount(updatedCart);
+                        setActionUI(variantId, nextQty);
+                    } catch (err) {
+                        log("Minus failed:", err);
+                    } finally {
+                        setBusy(variantId, false);
+                    }
+                    return;
+                }
+            });
+        }
+
+>>>>>>> Stashed changes
         if (!products?.length) {
             container.innerHTML = `
       <h3>No recommendations available</h3>
@@ -152,12 +603,31 @@
         <div class="binga-product-title">${p.title}</div>
         <div class="binga-product-price">$${p.price ?? ""}</div>
 
+<<<<<<< Updated upstream
         <button class="binga-btn primary binga-add" data-variant-id="${p.variantId}">
           Add to cart
         </button>
       </div>
     `
             )
+=======
+                return `
+          <div class="binga-product">
+            ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
+            <div class="binga-product-title">${p.title}</div>
+
+            <div class="binga-product-price">
+              <div class="orig">${original}</div>
+              <div class="disc">${discounted}<span class="pct">(${pct}% off)</span></div>
+            </div>
+
+            <div class="binga-action" data-variant-id="${p.variantId}" data-discount-percent="${pct}">
+              ${renderAddButton(p.variantId)}
+            </div>
+          </div>
+        `;
+            })
+>>>>>>> Stashed changes
             .join("");
 
         container.innerHTML = `
@@ -217,7 +687,39 @@
 
         log("Intercepted:", mode);
 
+<<<<<<< Updated upstream
         const { close } = openModalSkeleton();
+=======
+        // Close drawer before showing popup
+        if (mode === "checkout") {
+            await closeCartDrawerHard();
+            setTimeout(() => closeCartDrawerHard().catch(() => { }), 250);
+            await sleep(80);
+        }
+
+        // ✅ BUY NOW: add main product FIRST, do NOT redirect
+        if (mode === "buy_now") {
+            const { variantId, qty } = getMainVariantAndQty(clickedEl || event.target);
+            if (!variantId) {
+                FLOW_ACTIVE = false;
+                location.href = "/checkout";
+                return;
+            }
+
+            try {
+                await addVariantToCart(variantId, qty); // main item, no marker
+            } catch (e) {
+                log("Main product add failed:", e);
+                FLOW_ACTIVE = false;
+                location.href = "/checkout";
+                return;
+            }
+        }
+
+        const { close } = openModalSkeleton(() => {
+            FLOW_ACTIVE = false;
+        });
+>>>>>>> Stashed changes
 
         let cart;
         try {
@@ -249,12 +751,29 @@
 
         renderProducts(
             products,
+<<<<<<< Updated upstream
             async (selectedVariantId) => {
                 close();
                 if (selectedVariantId) {
                     try { await addVariantToCart(Number(selectedVariantId), 1); }
                     catch (e) { log("Failed adding recommended:", e); }
                 }
+=======
+            discountPercent,
+
+            // Add-only (no redirect) + marker for Function + percent hint
+            async (selectedVariantId, pct) => {
+                const pctNum = Number(pct);
+                const pctToSend =
+                    Number.isFinite(pctNum) && pctNum >= 0 ? String(Math.round(pctNum)) : String(Math.round(Number(discountPercent || 0)));
+
+                await addVariantToCart(Number(selectedVariantId), 1, {
+                    [UPSALE_MARKER_KEY]: UPSALE_MARKER_VALUE,
+                    [UPSALE_PCT_KEY]: pctToSend,
+                });
+                return await getCart();
+            },
+>>>>>>> Stashed changes
 
                 if (mode === "buy_now") {
                     const { variantId, qty } = getMainVariantAndQty(clickedEl);
@@ -264,6 +783,7 @@
                 location.href = "/checkout";
             },
             async () => {
+                await markBingaSessionBestEffort();
                 close();
 
                 if (mode === "buy_now") {
@@ -284,11 +804,56 @@
             return;
         }
 
+<<<<<<< Updated upstream
         const checkoutEl = e.target?.closest?.(CHECKOUT_SELECTORS);
         if (checkoutEl) {
             interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch(err => log("checkout error:", err));
         }
     }, true);
+=======
+            const submitter = e.submitter || document.activeElement;
+            if (!submitter || !submitter.closest) return;
+
+            const buyNowBtn = submitter.closest(BUY_NOW_SELECTORS);
+            if (buyNowBtn) {
+                interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
+                    log("buy_now submit error:", err)
+                );
+                return;
+            }
+
+            const checkoutBtn = submitter.closest(CHECKOUT_SELECTORS);
+            if (checkoutBtn) {
+                interceptFlow({ mode: "checkout", clickedEl: checkoutBtn, event: e }).catch((err) =>
+                    log("checkout submit error:", err)
+                );
+            }
+        },
+        true
+    );
+
+    // ✅ Click capture fallback (works for drawer checkout links/buttons)
+    document.addEventListener(
+        "click",
+        (e) => {
+            const buyNowBtn = e.target?.closest?.(BUY_NOW_SELECTORS);
+            if (buyNowBtn) {
+                interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
+                    log("buy_now click error:", err)
+                );
+                return;
+            }
+
+            const checkoutEl = e.target?.closest?.(CHECKOUT_SELECTORS);
+            if (checkoutEl) {
+                interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch((err) =>
+                    log("checkout click error:", err)
+                );
+            }
+        },
+        true
+    );
+>>>>>>> Stashed changes
 
     log("Loaded ✅", { page: location.pathname, productId: window.BINGA_BUY_NOW?.productId });
 })();
