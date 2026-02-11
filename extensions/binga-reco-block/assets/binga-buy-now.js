@@ -20,8 +20,6 @@
         "button[href^='/checkout']"
     ].join(",");
 
-<<<<<<< Updated upstream
-=======
     // Marker for Shopify Function (only for upsell items)
     const UPSALE_MARKER_KEY = "_binga_upsell";
     const UPSALE_MARKER_VALUE = "1";
@@ -280,7 +278,6 @@
         return true;
     }
 
->>>>>>> Stashed changes
     async function getCart() {
         const res = await fetch("/cart.js", { headers: { Accept: "application/json" } });
         if (!res.ok) throw new Error("cart_fetch_failed");
@@ -297,8 +294,6 @@
         return res.json();
     }
 
-<<<<<<< Updated upstream
-=======
     async function markBingaSession() {
         // Merge existing cart attributes to avoid overwriting other attributes
         let attrs = { [BINGA_SESSION_KEY]: BINGA_SESSION_VALUE };
@@ -354,7 +349,6 @@
         return idx >= 0 ? idx + 1 : null; // 1-based
     }
 
->>>>>>> Stashed changes
     function getMainVariantAndQty(clickedEl) {
         let form = clickedEl.closest("form");
         if (!form) form = document.querySelector("form[action^='/cart/add']");
@@ -452,8 +446,6 @@
         const container = document.querySelector("#binga-buy-now-modal");
         if (!container) return;
 
-<<<<<<< Updated upstream
-=======
         const renderAddButton = (variantId) => `
       <button class="binga-btn primary binga-add" data-variant-id="${variantId}">
         Add to cart
@@ -583,7 +575,6 @@
             });
         }
 
->>>>>>> Stashed changes
         if (!products?.length) {
             container.innerHTML = `
       <h3>No recommendations available</h3>
@@ -603,15 +594,13 @@
         <div class="binga-product-title">${p.title}</div>
         <div class="binga-product-price">$${p.price ?? ""}</div>
 
-<<<<<<< Updated upstream
         <button class="binga-btn primary binga-add" data-variant-id="${p.variantId}">
           Add to cart
         </button>
       </div>
     `
             )
-=======
-                return `
+        return `
           <div class="binga-product">
             ${p.image ? `<img src="${p.image}" alt="${p.title}" />` : ""}
             <div class="binga-product-title">${p.title}</div>
@@ -626,11 +615,10 @@
             </div>
           </div>
         `;
-            })
->>>>>>> Stashed changes
+    })
             .join("");
 
-        container.innerHTML = `
+    container.innerHTML = `
     <h3>Add one more item before checkout?</h3>
     <div class="binga-products">${productsHTML}</div>
     <div class="binga-footer">
@@ -638,222 +626,213 @@
     </div>
   `;
 
-        // "Add to cart" per item
-        container.querySelectorAll(".binga-add").forEach((btn) => {
-            btn.addEventListener("click", async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+    // "Add to cart" per item
+    container.querySelectorAll(".binga-add").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
 
-                const variantId = btn.dataset.variantId;
-                if (!variantId) return;
+            const variantId = btn.dataset.variantId;
+            if (!variantId) return;
 
-                // Optional: simple loading state
-                btn.disabled = true;
-                btn.textContent = "Adding...";
+            // Optional: simple loading state
+            btn.disabled = true;
+            btn.textContent = "Adding...";
 
-                try {
-                    await onAdd(variantId);
-                    btn.textContent = "Added ✅";
-                } catch (err) {
-                    console.log("[BINGA] Add failed:", err);
-                    btn.disabled = false;
-                    btn.textContent = "Add to cart";
-                }
-            });
+            try {
+                await onAdd(variantId);
+                btn.textContent = "Added ✅";
+            } catch (err) {
+                console.log("[BINGA] Add failed:", err);
+                btn.disabled = false;
+                btn.textContent = "Add to cart";
+            }
         });
+    });
 
-        container.querySelector("#binga-skip")?.addEventListener("click", onSkip);
-    }
+    container.querySelector("#binga-skip")?.addEventListener("click", onSkip);
+}
 
 
     async function fetchRecommendations(excludeCsv) {
-        const url = `/apps/binga-reco/recommend?limit=3&exclude=${encodeURIComponent(excludeCsv)}`;
-        log("Fetching recommendations:", url);
+    const url = `/apps/binga-reco/recommend?limit=3&exclude=${encodeURIComponent(excludeCsv)}`;
+    log("Fetching recommendations:", url);
 
-        const res = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
-        const out = await res.json();
-        log("Proxy response:", out);
+    const res = await fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" });
+    const out = await res.json();
+    log("Proxy response:", out);
 
-        if (!out?.ok) return [];
-        return out.products || [];
+    if (!out?.ok) return [];
+    return out.products || [];
+}
+
+async function interceptFlow({ mode, clickedEl, event }) {
+    // mode: "buy_now" (product page) OR "checkout" (cart/mini-cart)
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+
+    log("Intercepted:", mode);
+
+    const { close } = openModalSkeleton();
+    // Close drawer before showing popup
+    if (mode === "checkout") {
+        await closeCartDrawerHard();
+        setTimeout(() => closeCartDrawerHard().catch(() => { }), 250);
+        await sleep(80);
     }
 
-    async function interceptFlow({ mode, clickedEl, event }) {
-        // mode: "buy_now" (product page) OR "checkout" (cart/mini-cart)
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
-
-        log("Intercepted:", mode);
-
-<<<<<<< Updated upstream
-        const { close } = openModalSkeleton();
-=======
-        // Close drawer before showing popup
-        if (mode === "checkout") {
-            await closeCartDrawerHard();
-            setTimeout(() => closeCartDrawerHard().catch(() => { }), 250);
-            await sleep(80);
-        }
-
-        // ✅ BUY NOW: add main product FIRST, do NOT redirect
-        if (mode === "buy_now") {
-            const { variantId, qty } = getMainVariantAndQty(clickedEl || event.target);
-            if (!variantId) {
-                FLOW_ACTIVE = false;
-                location.href = "/checkout";
-                return;
-            }
-
-            try {
-                await addVariantToCart(variantId, qty); // main item, no marker
-            } catch (e) {
-                log("Main product add failed:", e);
-                FLOW_ACTIVE = false;
-                location.href = "/checkout";
-                return;
-            }
-        }
-
-        const { close } = openModalSkeleton(() => {
+    // ✅ BUY NOW: add main product FIRST, do NOT redirect
+    if (mode === "buy_now") {
+        const { variantId, qty } = getMainVariantAndQty(clickedEl || event.target);
+        if (!variantId) {
             FLOW_ACTIVE = false;
-        });
->>>>>>> Stashed changes
-
-        let cart;
-        try {
-            cart = await getCart();
-        } catch (e) {
-            log("Cart fetch failed:", e);
-            close();
-            if (mode === "buy_now") location.href = "/checkout";
-            return;
-        }
-
-        const excludeFromCart = (cart.items || []).map(i => String(i.product_id));
-        const currentProductId = window.BINGA_BUY_NOW?.productId ? String(window.BINGA_BUY_NOW.productId) : null;
-        const exclude = [...excludeFromCart, currentProductId].filter(Boolean).join(",");
-
-        let products = [];
-        try {
-            products = await fetchRecommendations(exclude);
-        } catch (e) {
-            log("Recommendation fetch failed:", e);
-            close();
-            if (mode === "buy_now") {
-                const { variantId, qty } = getMainVariantAndQty(clickedEl);
-                if (variantId) await addVariantToCart(variantId, qty);
-            }
             location.href = "/checkout";
             return;
         }
 
-        renderProducts(
-            products,
-<<<<<<< Updated upstream
-            async (selectedVariantId) => {
-                close();
-                if (selectedVariantId) {
-                    try { await addVariantToCart(Number(selectedVariantId), 1); }
-                    catch (e) { log("Failed adding recommended:", e); }
-                }
-=======
-            discountPercent,
-
-            // Add-only (no redirect) + marker for Function + percent hint
-            async (selectedVariantId, pct) => {
-                const pctNum = Number(pct);
-                const pctToSend =
-                    Number.isFinite(pctNum) && pctNum >= 0 ? String(Math.round(pctNum)) : String(Math.round(Number(discountPercent || 0)));
-
-                await addVariantToCart(Number(selectedVariantId), 1, {
-                    [UPSALE_MARKER_KEY]: UPSALE_MARKER_VALUE,
-                    [UPSALE_PCT_KEY]: pctToSend,
-                });
-                return await getCart();
-            },
->>>>>>> Stashed changes
-
-                if (mode === "buy_now") {
-                    const { variantId, qty } = getMainVariantAndQty(clickedEl);
-                    if (variantId) await addVariantToCart(variantId, qty);
-                }
-
-                location.href = "/checkout";
-            },
-            async () => {
-                await markBingaSessionBestEffort();
-                close();
-
-                if (mode === "buy_now") {
-                    const { variantId, qty } = getMainVariantAndQty(clickedEl);
-                    if (variantId) await addVariantToCart(variantId, qty);
-                }
-
-                location.href = "/checkout";
-            }
-        );
+        try {
+            await addVariantToCart(variantId, qty); // main item, no marker
+        } catch (e) {
+            log("Main product add failed:", e);
+            FLOW_ACTIVE = false;
+            location.href = "/checkout";
+            return;
+        }
     }
 
-    // Capture phase so we beat theme handlers
-    document.addEventListener("click", (e) => {
+    const { close } = openModalSkeleton(() => {
+        FLOW_ACTIVE = false;
+    });
+
+    let cart;
+    try {
+        cart = await getCart();
+    } catch (e) {
+        log("Cart fetch failed:", e);
+        close();
+        if (mode === "buy_now") location.href = "/checkout";
+        return;
+    }
+
+    const excludeFromCart = (cart.items || []).map(i => String(i.product_id));
+    const currentProductId = window.BINGA_BUY_NOW?.productId ? String(window.BINGA_BUY_NOW.productId) : null;
+    const exclude = [...excludeFromCart, currentProductId].filter(Boolean).join(",");
+
+    let products = [];
+    try {
+        products = await fetchRecommendations(exclude);
+    } catch (e) {
+        log("Recommendation fetch failed:", e);
+        close();
+        if (mode === "buy_now") {
+            const { variantId, qty } = getMainVariantAndQty(clickedEl);
+            if (variantId) await addVariantToCart(variantId, qty);
+        }
+        location.href = "/checkout";
+        return;
+    }
+
+    renderProducts(
+        products,
+        async (selectedVariantId) => {
+            close();
+            if (selectedVariantId) {
+                try { await addVariantToCart(Number(selectedVariantId), 1); }
+                catch (e) { log("Failed adding recommended:", e); }
+            }
+            discountPercent,
+
+                // Add-only (no redirect) + marker for Function + percent hint
+                async (selectedVariantId, pct) => {
+                    const pctNum = Number(pct);
+                    const pctToSend =
+                        Number.isFinite(pctNum) && pctNum >= 0 ? String(Math.round(pctNum)) : String(Math.round(Number(discountPercent || 0)));
+
+                    await addVariantToCart(Number(selectedVariantId), 1, {
+                        [UPSALE_MARKER_KEY]: UPSALE_MARKER_VALUE,
+                        [UPSALE_PCT_KEY]: pctToSend,
+                    });
+                    return await getCart();
+                },
+
+                if (mode === "buy_now") {
+                const { variantId, qty } = getMainVariantAndQty(clickedEl);
+                if (variantId) await addVariantToCart(variantId, qty);
+            }
+
+            location.href = "/checkout";
+        },
+        async () => {
+            await markBingaSessionBestEffort();
+            close();
+
+            if (mode === "buy_now") {
+                const { variantId, qty } = getMainVariantAndQty(clickedEl);
+                if (variantId) await addVariantToCart(variantId, qty);
+            }
+
+            location.href = "/checkout";
+        }
+    );
+}
+
+// Capture phase so we beat theme handlers
+document.addEventListener("click", (e) => {
+    const buyNowBtn = e.target?.closest?.(BUY_NOW_SELECTORS);
+    if (buyNowBtn) {
+        interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch(err => log("buy_now error:", err));
+        return;
+    }
+
+    const checkoutEl = e.target?.closest?.(CHECKOUT_SELECTORS);
+    if (checkoutEl) {
+        interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch(err => log("checkout error:", err));
+    }
+}, true);
+const submitter = e.submitter || document.activeElement;
+if (!submitter || !submitter.closest) return;
+
+const buyNowBtn = submitter.closest(BUY_NOW_SELECTORS);
+if (buyNowBtn) {
+    interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
+        log("buy_now submit error:", err)
+    );
+    return;
+}
+
+const checkoutBtn = submitter.closest(CHECKOUT_SELECTORS);
+if (checkoutBtn) {
+    interceptFlow({ mode: "checkout", clickedEl: checkoutBtn, event: e }).catch((err) =>
+        log("checkout submit error:", err)
+    );
+}
+},
+true
+);
+
+// ✅ Click capture fallback (works for drawer checkout links/buttons)
+document.addEventListener(
+    "click",
+    (e) => {
         const buyNowBtn = e.target?.closest?.(BUY_NOW_SELECTORS);
         if (buyNowBtn) {
-            interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch(err => log("buy_now error:", err));
+            interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
+                log("buy_now click error:", err)
+            );
             return;
         }
 
-<<<<<<< Updated upstream
         const checkoutEl = e.target?.closest?.(CHECKOUT_SELECTORS);
         if (checkoutEl) {
-            interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch(err => log("checkout error:", err));
+            interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch((err) =>
+                log("checkout click error:", err)
+            );
         }
-    }, true);
-=======
-            const submitter = e.submitter || document.activeElement;
-            if (!submitter || !submitter.closest) return;
+    },
+    true
+);
 
-            const buyNowBtn = submitter.closest(BUY_NOW_SELECTORS);
-            if (buyNowBtn) {
-                interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
-                    log("buy_now submit error:", err)
-                );
-                return;
-            }
-
-            const checkoutBtn = submitter.closest(CHECKOUT_SELECTORS);
-            if (checkoutBtn) {
-                interceptFlow({ mode: "checkout", clickedEl: checkoutBtn, event: e }).catch((err) =>
-                    log("checkout submit error:", err)
-                );
-            }
-        },
-        true
-    );
-
-    // ✅ Click capture fallback (works for drawer checkout links/buttons)
-    document.addEventListener(
-        "click",
-        (e) => {
-            const buyNowBtn = e.target?.closest?.(BUY_NOW_SELECTORS);
-            if (buyNowBtn) {
-                interceptFlow({ mode: "buy_now", clickedEl: buyNowBtn, event: e }).catch((err) =>
-                    log("buy_now click error:", err)
-                );
-                return;
-            }
-
-            const checkoutEl = e.target?.closest?.(CHECKOUT_SELECTORS);
-            if (checkoutEl) {
-                interceptFlow({ mode: "checkout", clickedEl: checkoutEl, event: e }).catch((err) =>
-                    log("checkout click error:", err)
-                );
-            }
-        },
-        true
-    );
->>>>>>> Stashed changes
-
-    log("Loaded ✅", { page: location.pathname, productId: window.BINGA_BUY_NOW?.productId });
-})();
+log("Loaded ✅", { page: location.pathname, productId: window.BINGA_BUY_NOW?.productId });
+}) ();
